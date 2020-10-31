@@ -284,7 +284,7 @@ type StudioMesh struct {
 type StudioTriangle struct {
 	VertexIndex uint16 // index into vertex array
 	NormalIndex uint16 // index into normal array
-	S, T        uint16 // s, t position on skin
+	S, T        int16  // s, t position on skin
 }
 
 type StudioAttachment struct {
@@ -668,11 +668,11 @@ func (mdl *Mdl) ReadAttachments(file *os.File) error {
 	}
 	var attachments = make([]*StudioAttachment, mdl.Header.AttachmentsNum)
 	for i := 0; i < int(mdl.Header.AttachmentsNum); i++ {
-		hb := new(StudioAttachment)
-		if err := binary.Read(file, binary.LittleEndian, hb); err != nil {
+		a := new(StudioAttachment)
+		if err := binary.Read(file, binary.LittleEndian, a); err != nil {
 			return err
 		}
-		attachments[i] = hb
+		attachments[i] = a
 	}
 	mdl.Attachments = attachments
 	return nil

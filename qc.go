@@ -501,6 +501,6 @@ func saveQCScript(outPath string, mdl *Mdl) error {
 
 	writer.WriteString("\n// End of QC script.\n")
 
-	fmt.Printf("QC Script: %s\n", outPath)
+	fmt.Printf("QC Script: %s\n", filepath.Base(outPath))
 	return nil
 }
