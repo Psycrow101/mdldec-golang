@@ -11,6 +11,8 @@ const MdlIdent = 0x54534449
 const SeqIdent = 0x51534449
 const StudioVersion = 10
 
+const MaxHitboxes = 512
+
 // lighting & rendermode options
 const (
 	StudioNfFlatshade = 1 << iota

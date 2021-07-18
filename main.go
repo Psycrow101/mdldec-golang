@@ -198,7 +198,7 @@ func loadMDL(modelPath string) (*Mdl, error) {
 		}
 	}
 
-	if studioHdr.HitBoxesNum > studioHdr.BonesNum {
+	if studioHdr.HitBoxesNum > MaxHitboxes {
 		fmt.Printf("[WARNING] Invalid hitboxes number (%d) \n", studioHdr.HitBoxesNum)
 		studioHdr.HitBoxesNum = 0
 	} else if studioHdr.HitBoxesOff+studioHdr.HitBoxesNum*68 > studioHdr.Length {
