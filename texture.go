@@ -9,7 +9,7 @@ import (
 	"path/filepath"
 )
 
-func saveTextures(outPath string, mdl *Mdl) error {
+func saveTextures(destPath string, mdl *Mdl) error {
 	var (
 		err      error
 		filePath string
@@ -20,7 +20,7 @@ func saveTextures(outPath string, mdl *Mdl) error {
 
 	for _, tex := range mdl.Textures {
 		func() {
-			filePath = filepath.Join(outPath, tex.Name.String())
+			filePath = filepath.Join(destPath, tex.Name.String())
 
 			if err = os.RemoveAll(filePath); err != nil {
 				printError(err)

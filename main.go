@@ -29,9 +29,12 @@ func fixNames(mdl *Mdl) {
 	modelPattern := `(_body)(\d+)(_)(\d+)`
 	seqPattern := `(_seq)(\d+)`
 
-	usedNames := make(map[string]bool)
-	isNameUsed := func(name string) bool {
-		if _, ok := usedNames[name]; ok {
+	var usedNames [3]map[string]bool
+	for i := 0; i < len(usedNames); i++ {
+		usedNames[i] = make(map[string]bool)
+	}
+	isNameUsed := func(name string, t int) bool {
+		if _, ok := usedNames[t][name]; ok {
 			return true
 		}
 		return false
@@ -39,10 +42,10 @@ func fixNames(mdl *Mdl) {
 
 	for i, tex := range mdl.Textures {
 		str = tex.Name.String()
-		if !isValidName(str) || checkReg(str, texPattern) || isNameUsed(str) {
+		if !isValidName(str) || checkReg(str, texPattern) || isNameUsed(str, 0) {
 			str = fmt.Sprintf("_texture%d.bmp", i+1)
 			tex.Name.FromString(str)
-			usedNames[str] = true
+			usedNames[0][str] = true
 		}
 	}
 
@@ -54,20 +57,20 @@ func fixNames(mdl *Mdl) {
 		}
 		for j, m := range bp.Models {
 			str = m.Name.String()
-			if !isValidName(str) || checkReg(str, modelPattern) || isNameUsed(str) {
+			if !isValidName(str) || checkReg(str, modelPattern) || isNameUsed(str, 1) {
 				str = fmt.Sprintf("_body%d_%d", i+1, j+1)
 				m.Name.FromString(str)
-				usedNames[str] = true
+				usedNames[1][str] = true
 			}
 		}
 	}
 
 	for i, seq := range mdl.Sequences {
 		str = seq.Label.String()
-		if !isValidName(str) || checkReg(str, seqPattern) || isNameUsed(str) {
+		if !isValidName(str) || checkReg(str, seqPattern) || isNameUsed(str, 2) {
 			str = fmt.Sprintf("_seq%d", i+1)
 			seq.Label.FromString(str)
-			usedNames[str] = true
+			usedNames[2][str] = true
 		}
 	}
 }
@@ -234,11 +237,9 @@ func main() {
 		destPath = args[2]
 	}
 
-	if _, err := os.Stat(destPath); os.IsNotExist(err) {
-		if err := os.Mkdir(destPath, 0744); err != nil {
-			printError(err)
-			return
-		}
+	if err := createDirectory(destPath); err != nil {
+		printError(err)
+		return
 	}
 
 	if mdl, err := loadMDL(args[1]); err != nil {
@@ -265,7 +266,13 @@ func main() {
 
 		go func() {
 			defer wg.Done()
-			if err = saveTextures(destPath, mdl); err != nil {
+			texturesPath := filepath.Join(destPath, "textures")
+			if err := createDirectory(texturesPath); err != nil {
+				printError(err)
+				return
+			}
+			
+			if err = saveTextures(texturesPath, mdl); err != nil {
 				printError(err)
 			}
 		}()

@@ -345,19 +345,19 @@ func writeSequenceInfo(writer *bufio.Writer, mdl *Mdl) {
 				writer.WriteString("{\n")
 				for j := 1; j <= int(seq.BlendsNum); j++ {
 					writer.WriteString("          ")
-					writer.WriteString(fmt.Sprintf("\"%s_blend%d\" ", seq.Label, j))
+					writer.WriteString(fmt.Sprintf("\"anims/%s_blend%d\" ", seq.Label, j))
 					writer.WriteString("\n")
 				}
 				writer.WriteString("          ")
 			} else {
-				writer.WriteString(fmt.Sprintf("\"%s_blend1\" ", seq.Label))
-				writer.WriteString(fmt.Sprintf("\"%s_blend2\" ", seq.Label))
+				writer.WriteString(fmt.Sprintf("\"anims/%s_blend1\" ", seq.Label))
+				writer.WriteString(fmt.Sprintf("\"anims/%s_blend2\" ", seq.Label))
 			}
 			writer.WriteString(fmt.Sprintf("blend %s %.0f %.0f",
 				getMotionTypeString(int(seq.BlendTypes[0]), false),
 				seq.BlendStart[0], seq.BlendEnd[0]))
 		} else {
-			writer.WriteString(fmt.Sprintf("\"%s\"", seq.Label))
+			writer.WriteString(fmt.Sprintf("\"anims/%s\"", seq.Label))
 		}
 
 		if seq.MotionType > 0 {
@@ -465,7 +465,7 @@ func saveQCScript(outPath string, mdl *Mdl) error {
 
 	writer.WriteString(fmt.Sprintf("$modelname \"%s\"\n", filepath.Base(mdl.FilePath)))
 	writer.WriteString("$cd \".\\\"\n")
-	writer.WriteString("$cdtexture \".\\\"\n")
+	writer.WriteString("$cdtexture \"textures\"\n")
 	writer.WriteString("$scale 1.0\n")
 	writer.WriteString("$cliptotextures\n\n")
 
