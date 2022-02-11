@@ -12,7 +12,20 @@ import (
 type Vector4 struct{ X, Y, Z, W float64 }
 type Matrix3x4 [3]Vector4
 
+type Vector4_32 struct{ X, Y, Z, W float32 }
+type Matrix3x4_32 [3]Vector4_32
+
+func (mat *Matrix3x4) From32(mat32 *Matrix3x4_32) {
+	for i := 0; i < 3; i++ {
+		mat[i].X = float64(mat32[i].X)
+		mat[i].Y = float64(mat32[i].Y)
+		mat[i].Z = float64(mat32[i].Z)
+		mat[i].W = float64(mat32[i].W)
+	}
+}
+
 var boneTransforms []*Matrix3x4
+var worldTransform []*Matrix3x4
 
 func matrix3x4concatTransforms(m1, m2 *Matrix3x4) *Matrix3x4 {
 	var out Matrix3x4
@@ -31,7 +44,7 @@ func matrix3x4concatTransforms(m1, m2 *Matrix3x4) *Matrix3x4 {
 	return &out
 }
 
-func angleQuaternion(angles *Vector3) *Vector4 {
+func angleQuaternion(angles *Vector3_32) *Vector4 {
 	var sr, sp, sy, cr, cp, cy float64
 
 	sy, cy = math.Sincos(float64(angles.Z) * 0.5)
@@ -46,7 +59,7 @@ func angleQuaternion(angles *Vector3) *Vector4 {
 	}
 }
 
-func matrix3x4FromOriginQuat(quat *Vector4, origin *Vector3) *Matrix3x4 {
+func matrix3x4FromOriginQuat(quat *Vector4, origin *Vector3_32) *Matrix3x4 {
 	var out Matrix3x4
 
 	out[0].X = 1.0 - 2.0*quat.Y*quat.Y - 2.0*quat.Z*quat.Z
@@ -68,20 +81,57 @@ func matrix3x4FromOriginQuat(quat *Vector4, origin *Vector3) *Matrix3x4 {
 	return &out
 }
 
-func matrix3x4VectorTransform(m *Matrix3x4, v *Vector3) *Vector3 {
+func matrix3x4VectorTransform(m *Matrix3x4, v *Vector3_32) *Vector3_32 {
 	var out [3]float64
 	out[0] = float64(v.X)*m[0].X + float64(v.Y)*m[0].Y + float64(v.Z)*m[0].Z + m[0].W
 	out[1] = float64(v.X)*m[1].X + float64(v.Y)*m[1].Y + float64(v.Z)*m[1].Z + m[1].W
 	out[2] = float64(v.X)*m[2].X + float64(v.Y)*m[2].Y + float64(v.Z)*m[2].Z + m[2].W
-	return &Vector3{float32(out[0]), float32(out[1]), float32(out[2])}
+	return &Vector3_32{float32(out[0]), float32(out[1]), float32(out[2])}
 }
 
-func matrix3x4VectorRotate(m *Matrix3x4, v *Vector3) *Vector3 {
+func matrix3x4VectorRotate(m *Matrix3x4, v *Vector3_32) *Vector3_32 {
 	var out [3]float64
 	out[0] = float64(v.X)*m[0].X + float64(v.Y)*m[0].Y + float64(v.Z)*m[0].Z
 	out[1] = float64(v.X)*m[1].X + float64(v.Y)*m[1].Y + float64(v.Z)*m[1].Z
 	out[2] = float64(v.X)*m[2].X + float64(v.Y)*m[2].Y + float64(v.Z)*m[2].Z
-	return &Vector3{float32(out[0]), float32(out[1]), float32(out[2])}
+	return &Vector3_32{float32(out[0]), float32(out[1]), float32(out[2])}
+}
+
+func computeSkinMatrix(boneWeights *StudioBoneWeight) *Matrix3x4 {
+	var (
+		weights  [MaxBoneWeights]float64
+		boneMats [MaxBoneWeights]*Matrix3x4
+		bonesNum int
+		total    float64
+		out      = Matrix3x4{}
+	)
+
+	for _, b := range boneWeights.Bone {
+		if b != -1 {
+			bonesNum++
+		}
+	}
+
+	for i := 0; i < bonesNum; i++ {
+		boneMats[i] = worldTransform[boneWeights.Bone[i]]
+		weights[i] = float64(boneWeights.Weight[i]) / 255.0
+		total += weights[i]
+	}
+
+	if total < 1.0 {
+		weights[0] += 1.0 - total
+	}
+
+	for i := 0; i < bonesNum; i++ {
+		for j := 0; j < 3; j++ {
+			out[j].X += boneMats[i][j].X * weights[i]
+			out[j].Y += boneMats[i][j].Y * weights[i]
+			out[j].Z += boneMats[i][j].Z * weights[i]
+			out[j].W += boneMats[i][j].W * weights[i]
+		}
+	}
+
+	return &out
 }
 
 func calcBonePosition(anim *Anim, bone *StudioBone, frame int) [6]float64 {
@@ -170,7 +220,9 @@ func writeTriangleInfo(writer *bufio.Writer, model *Model, mdl *Mdl,
 		boneIndex            byte
 		vert                 *StudioTriangle
 		u, v                 float32
-		vertPos, vertNorm    *Vector3
+		vertPos, vertNorm    *Vector3_32
+		vertWeightsNum       int
+		vertWeight           *StudioBoneWeight
 	)
 
 	if isEvenStrip {
@@ -195,18 +247,50 @@ func writeTriangleInfo(writer *bufio.Writer, model *Model, mdl *Mdl,
 		normIndex = vert.NormalIndex
 		boneIndex = model.VerticesInfo[vertIndex]
 
-		vertPos = matrix3x4VectorTransform(boneTransforms[boneIndex], &model.Vertices[vertIndex])
-		vertNorm = matrix3x4VectorRotate(boneTransforms[boneIndex], &model.Normals[normIndex])
-		vertNorm.Normalize()
-
 		u = float32((float64(vert.S)) * s)
 		v = float32(1.0 - float64(vert.T)*t)
 
-		writer.WriteString(fmt.Sprintf("%3d %f %f %f %f %f %f %f %f\n",
-			boneIndex,
-			vertPos.X, vertPos.Y, vertPos.Z,
-			vertNorm.X, vertNorm.Y, vertNorm.Z,
-			u, v))
+		if mdl.Header.Flags&StudioHasBoneWeights != 0 {
+			vertWeight = &model.VerticesWeights[vertIndex]
+			mat := computeSkinMatrix(vertWeight)
+			vertPos = matrix3x4VectorTransform(mat, &model.Vertices[vertIndex])
+			vertNorm = matrix3x4VectorRotate(mat, &model.Normals[normIndex])
+			vertNorm.Normalize()
+
+			writer.WriteString(fmt.Sprintf("%3d %f %f %f %f %f %f %f %f",
+				boneIndex,
+				vertPos.X, vertPos.Y, vertPos.Z,
+				vertNorm.X, vertNorm.Y, vertNorm.Z,
+				u, v))
+
+			vertWeightsNum = 0
+
+			for _, b := range vertWeight.Bone {
+				if b != -1 {
+					vertWeightsNum++
+				}
+			}
+
+			if vertWeightsNum > 0 {
+				writer.WriteString(fmt.Sprintf(" %d", vertWeightsNum))
+				for b := 0; b < vertWeightsNum; b++ {
+					writer.WriteString(fmt.Sprintf(" %d %f",
+						vertWeight.Bone[b], float32(vertWeight.Weight[b])/255.0))
+				}
+			}
+			writer.WriteString("\n")
+
+		} else {
+			vertPos = matrix3x4VectorTransform(boneTransforms[boneIndex], &model.Vertices[vertIndex])
+			vertNorm = matrix3x4VectorRotate(boneTransforms[boneIndex], &model.Normals[normIndex])
+			vertNorm.Normalize()
+
+			writer.WriteString(fmt.Sprintf("%3d %f %f %f %f %f %f %f %f\n",
+				boneIndex,
+				vertPos.X, vertPos.Y, vertPos.Z,
+				vertNorm.X, vertNorm.Y, vertNorm.Z,
+				u, v))
+		}
 	}
 }
 
@@ -299,13 +383,23 @@ func saveReferences(outPath string, mdl *Mdl) error {
 	boneTransforms = make([]*Matrix3x4, mdl.Header.BonesNum)
 
 	for i, bone := range mdl.Bones {
-		quat := angleQuaternion(&Vector3{bone.Value[3], bone.Value[4], bone.Value[5]})
+		quat := angleQuaternion(&Vector3_32{bone.Value[3], bone.Value[4], bone.Value[5]})
 		boneTransforms[i] = matrix3x4FromOriginQuat(quat,
-			&Vector3{bone.Value[0], bone.Value[1], bone.Value[2]})
+			&Vector3_32{bone.Value[0], bone.Value[1], bone.Value[2]})
 
 		if bone.Parent > -1 {
 			boneTransforms[i] = matrix3x4concatTransforms(boneTransforms[bone.Parent],
 				boneTransforms[i])
+		}
+	}
+
+	if mdl.Header.Flags&StudioHasBoneInfo != 0 {
+		worldTransform = make([]*Matrix3x4, mdl.Header.BonesNum)
+		poseToBone := new(Matrix3x4)
+
+		for i, boneInfo := range mdl.BonesInfo {
+			poseToBone.From32(&boneInfo.PoseToBone)
+			worldTransform[i] = matrix3x4concatTransforms(boneTransforms[i], poseToBone)
 		}
 	}
 
@@ -396,7 +490,7 @@ func saveSMDs(destPath string, mdl *Mdl) error {
 	if err := saveReferences(destPath, mdl); err != nil {
 		return err
 	}
-	
+
 	sequencesPath := filepath.Join(destPath, "anims")
 	if err := createDirectory(sequencesPath); err != nil {
 		printError(err)

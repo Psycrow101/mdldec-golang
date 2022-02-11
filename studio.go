@@ -12,6 +12,13 @@ const SeqIdent = 0x51534449
 const StudioVersion = 10
 
 const MaxHitboxes = 512
+const MaxBoneWeights = 4
+
+// client-side model flags
+const (
+	StudioHasBoneInfo    = 1 << 30
+	StudioHasBoneWeights = 1 << 31
+)
 
 // lighting & rendermode options
 const (
@@ -50,12 +57,12 @@ const (
 	StudioMotionRLoop = 0x8000 // controller that wraps shortest distance
 )
 
-type Vector3 struct{ X, Y, Z float32 }
+type Vector3_32 struct{ X, Y, Z float32 }
 
 type Bytes32 [32]byte
 type Bytes64 [64]byte
 
-func (v *Vector3) Normalize() {
+func (v *Vector3_32) Normalize() {
 	vecLen := float32(math.Sqrt(float64(v.X*v.X + v.Y*v.Y + v.Z*v.Z)))
 	if vecLen > 0.0 {
 		vecLen = 1.0 / vecLen
@@ -113,12 +120,12 @@ type StudioHdr struct {
 	Name   Bytes64
 	Length uint32
 
-	EyePosition Vector3 // ideal eye position
-	Min         Vector3 // ideal movement hull size
-	Max         Vector3
+	EyePosition Vector3_32 // ideal eye position
+	Min         Vector3_32 // ideal movement hull size
+	Max         Vector3_32
 
-	BBMin Vector3 // clipping bounding box
-	BBMax Vector3
+	BBMin Vector3_32 // clipping bounding box
+	BBMax Vector3_32
 
 	Flags uint32
 
@@ -181,9 +188,9 @@ type StudioBone struct {
 
 type StudioHitBox struct {
 	Bone  uint32
-	Group uint32  // intersection group
-	BBMin Vector3 // bounding box
-	BBMax Vector3
+	Group uint32     // intersection group
+	BBMin Vector3_32 // bounding box
+	BBMax Vector3_32
 }
 
 type StudioSequence struct {
@@ -204,12 +211,12 @@ type StudioSequence struct {
 
 	MotionType       uint32
 	MotionBone       uint32
-	LinerMovement    Vector3
+	LinerMovement    Vector3_32
 	AutoMovePosOff   uint32
 	AutoMoveAngleOff uint32
 
-	BBMin Vector3 // per sequence bounding box
-	BBMax Vector3
+	BBMin Vector3_32 // per sequence bounding box
+	BBMax Vector3_32
 
 	BlendsNum uint32
 	AnimOff   uint32 // StudioAnimation pointer relative to start of sequence group data
@@ -283,6 +290,20 @@ type StudioMesh struct {
 	NormalsOff   uint32
 }
 
+type StudioBoneWeight struct {
+	Weight [MaxBoneWeights]uint8
+	Bone   [MaxBoneWeights]int8
+}
+
+type StudioBoneInfo struct {
+	PoseToBone Matrix3x4_32
+	QAlignment Vector4_32
+	ProcType   int32
+	ProcIndex  int32
+	Quat       Vector4_32
+	Reserved   [10]int32
+}
+
 type StudioTriangle struct {
 	VertexIndex uint16 // index into vertex array
 	NormalIndex uint16 // index into normal array
@@ -293,8 +314,8 @@ type StudioAttachment struct {
 	Name    Bytes32
 	Type    uint32
 	Bone    uint32
-	Origins Vector3
-	Vectors [3]Vector3
+	Origins Vector3_32
+	Vectors [3]Vector3_32
 }
 
 type Sequence struct {
@@ -326,10 +347,11 @@ type BodyPart struct {
 
 type Model struct {
 	StudioModel
-	Meshes       []*Mesh
-	Vertices     []Vector3
-	VerticesInfo []byte
-	Normals      []Vector3
+	Meshes          []*Mesh
+	Vertices        []Vector3_32
+	VerticesInfo    []byte
+	Normals         []Vector3_32
+	VerticesWeights []StudioBoneWeight
 }
 
 type Mesh struct {
@@ -346,6 +368,7 @@ type Mdl struct {
 	FilePath        string
 	Header          *StudioHdr
 	Bones           []*StudioBone
+	BonesInfo       []*StudioBoneInfo
 	BoneControllers []*StudioBoneController
 	HitBoxes        []*StudioHitBox
 	Sequences       []*Sequence
@@ -368,6 +391,19 @@ func (mdl *Mdl) ReadBones(file *os.File) error {
 		bones[i] = b
 	}
 	mdl.Bones = bones
+
+	if mdl.Header.Flags&StudioHasBoneInfo != 0 {
+		var bonesInfo = make([]*StudioBoneInfo, mdl.Header.BonesNum)
+		for i := 0; i < int(mdl.Header.BonesNum); i++ {
+			bi := new(StudioBoneInfo)
+			if err := binary.Read(file, binary.LittleEndian, bi); err != nil {
+				return err
+			}
+			bonesInfo[i] = bi
+		}
+		mdl.BonesInfo = bonesInfo
+	}
+
 	return nil
 }
 
@@ -548,7 +584,7 @@ func (mdl *Mdl) ReadBodyParts(file *os.File) error {
 			return err
 		}
 		curFileOff, _ := file.Seek(0, io.SeekCurrent)
-		if err := bp.readModels(file); err != nil {
+		if err := bp.readModels(file, mdl.Header.Flags&StudioHasBoneWeights != 0); err != nil {
 			return err
 		}
 		file.Seek(curFileOff, 0)
@@ -558,7 +594,7 @@ func (mdl *Mdl) ReadBodyParts(file *os.File) error {
 	return nil
 }
 
-func (bp *BodyPart) readModels(file *os.File) error {
+func (bp *BodyPart) readModels(file *os.File, hasBoneWeights bool) error {
 	if _, err := file.Seek(int64(bp.ModelsOff), 0); err != nil {
 		return err
 	}
@@ -577,7 +613,7 @@ func (bp *BodyPart) readModels(file *os.File) error {
 		if _, err := file.Seek(int64(m.VertsOff), 0); err != nil {
 			return err
 		}
-		m.Vertices = make([]Vector3, m.VertsNum)
+		m.Vertices = make([]Vector3_32, m.VertsNum)
 		if err := binary.Read(file, binary.LittleEndian, &m.Vertices); err != nil {
 			return err
 		}
@@ -593,9 +629,19 @@ func (bp *BodyPart) readModels(file *os.File) error {
 		if _, err := file.Seek(int64(m.NormalsOff), 0); err != nil {
 			return err
 		}
-		m.Normals = make([]Vector3, m.NormalsNum)
+		m.Normals = make([]Vector3_32, m.NormalsNum)
 		if err := binary.Read(file, binary.LittleEndian, &m.Normals); err != nil {
 			return err
+		}
+
+		if hasBoneWeights {
+			if _, err := file.Seek(int64(m.BlendVertInfoOff), 0); err != nil {
+				return err
+			}
+			m.VerticesWeights = make([]StudioBoneWeight, m.VertsNum)
+			if err := binary.Read(file, binary.LittleEndian, &m.VerticesWeights); err != nil {
+				return err
+			}
 		}
 
 		file.Seek(curFileOff, 0)
